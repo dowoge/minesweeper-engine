@@ -5,8 +5,8 @@ local TileState = {
     Unknown = 4
 }
 
-local MAX_TESTING_ITERATIONS = 12
-local AUTO_FLAG_DISTANCE = 15
+local MAX_TESTING_ITERATIONS = 17
+local AUTO_FLAG_DISTANCE = 22.5
 
 -- local TileSize = 5
 local PosTolerance = 0.01
@@ -252,58 +252,48 @@ local function InitializeBoard()
             Iterations = Iterations + 1
             Changed = false
             
-            local TilesToCheck = {}
-            for Part, _ in pairs(DirtyTiles) do
-                if Status[Part] == TileState.Revealed then
-                    table.insert(TilesToCheck, Part)
-                end
-            end
-            
-            for _, RevealedPart in ipairs(NewlyRevealed) do
-                if Status[RevealedPart.part] == TileState.Revealed then
-                    table.insert(TilesToCheck, RevealedPart.part)
-                end
-            end
-            
-            for _, Part in ipairs(TilesToCheck) do
-                local Number = GetRevealedNumber(Part)
-                if Number then
-                    local Coords = GetCoords(Part)
-                    
-                    if Coords then
-                        local R, C = Coords.r, Coords.c
-                        local NeighborsList = GetNeighbors(R, C)
-                        local Unknowns = {}
-                        local KnownMines = 0
-                        for _, Info in ipairs(NeighborsList) do
-                            local NeighborPart = Info.part
-                            local NeighborStatus = Status[NeighborPart]
-                            if NeighborStatus == TileState.Mine then
-                                KnownMines = KnownMines + 1
-                            elseif NeighborStatus == TileState.Unknown then
-                                table.insert(Unknowns, NeighborPart)
-                            end
-                        end
-                        local Need = Number - KnownMines
-                        if Need <= 0 and #Unknowns > 0 then
-                            for _, UnknownPart in ipairs(Unknowns) do
-                                if Status[UnknownPart] ~= TileState.Safe then
-                                    Status[UnknownPart] = TileState.Safe
-                                    Changed = true
-                                    DirtyTiles[UnknownPart] = true
+            for R = 1, Rows do
+                for C = 1, Cols do
+                    local Part = Grid[R][C]
+                    if Part and Status[Part] == TileState.Revealed then
+                        local Number = GetRevealedNumber(Part)
+                        if Number then
+                            local NeighborsList = GetNeighbors(R, C)
+                            local Unknowns = {}
+                            local KnownMines = 0
+                            for _, Info in ipairs(NeighborsList) do
+                                local NeighborPart = Info.part
+                                local NeighborStatus = Status[NeighborPart]
+                                if NeighborStatus == TileState.Mine then
+                                    KnownMines = KnownMines + 1
+                                elseif NeighborStatus == TileState.Unknown then
+                                    table.insert(Unknowns, NeighborPart)
                                 end
                             end
-                        elseif Need == #Unknowns and #Unknowns > 0 then
-                            for _, UnknownPart in ipairs(Unknowns) do
-                                if Status[UnknownPart] ~= TileState.Mine then
-                                    Status[UnknownPart] = TileState.Mine
-                                    Changed = true
-                                    DirtyTiles[UnknownPart] = true
-                                    TryFlagTile(UnknownPart)
+                            local Need = Number - KnownMines
+                            if Need <= 0 and #Unknowns > 0 then
+                                for _, UnknownPart in ipairs(Unknowns) do
+                                    if Status[UnknownPart] ~= TileState.Safe then
+                                        Status[UnknownPart] = TileState.Safe
+                                        UnknownPart.Color = SafeColor
+                                        Changed = true
+                                        DirtyTiles[UnknownPart] = true
+                                    end
+                                end
+                            elseif Need == #Unknowns and #Unknowns > 0 then
+                                for _, UnknownPart in ipairs(Unknowns) do
+                                    if Status[UnknownPart] ~= TileState.Mine then
+                                        Status[UnknownPart] = TileState.Mine
+                                        UnknownPart.Color = MineColor
+                                        Changed = true
+                                        DirtyTiles[UnknownPart] = true
+                                        TryFlagTile(UnknownPart)
+                                    end
                                 end
                             end
                         end
                     end
+                    if Changed then break end
                 end
                 if Changed then break end
             end
@@ -369,12 +359,14 @@ local function InitializeBoard()
                                                         for _, U in ipairs(Unique1) do
                                                             if Status[U.part] ~= TileState.Safe then
                                                                 Status[U.part] = TileState.Safe
+                                                                U.part.Color = SafeColor
                                                                 Changed = true
                                                             end
                                                         end
                                                         for _, U in ipairs(Unique2) do
                                                             if Status[U.part] ~= TileState.Safe then
                                                                 Status[U.part] = TileState.Safe
+                                                                U.part.Color = SafeColor
                                                                 Changed = true
                                                             end
                                                         end
@@ -384,6 +376,7 @@ local function InitializeBoard()
                                                         for _, U in ipairs(Unique1) do
                                                             if Status[U.part] ~= TileState.Mine then
                                                                 Status[U.part] = TileState.Mine
+                                                                U.part.Color = MineColor
                                                                 Changed = true
                                                                 TryFlagTile(U.part)
                                                             end
@@ -394,6 +387,7 @@ local function InitializeBoard()
                                                         for _, U in ipairs(Unique2) do
                                                             if Status[U.part] ~= TileState.Mine then
                                                                 Status[U.part] = TileState.Mine
+                                                                U.part.Color = MineColor
                                                                 Changed = true
                                                                 TryFlagTile(U.part)
                                                             end
@@ -415,24 +409,30 @@ local function InitializeBoard()
                 end
                 if Changed then break end
             end
-            if not Changed then
+            
+            if not Changed and Iterations >= 3 then
                 local FrontierTiles = {}
                 for R = 1, Rows do
                     for C = 1, Cols do
                         local Part = Grid[R][C]
                         if Part and Status[Part] == TileState.Unknown then
-                            local NeighborsList = Neighbors(R, C)
+                            local NeighborsList = GetNeighbors(R, C)
+                            local HasRevealedNeighbor = false
                             for _, Info in ipairs(NeighborsList) do
                                 if Status[Info.part] == TileState.Revealed then
-                                    table.insert(FrontierTiles, {r = R, c = C, part = Part})
+                                    HasRevealedNeighbor = true
                                     break
                                 end
+                            end
+                            if HasRevealedNeighbor then
+                                table.insert(FrontierTiles, {r = R, c = C, part = Part})
                             end
                         end
                     end
                 end
 
-                for TileIdx, Tile in ipairs(FrontierTiles) do
+                if #FrontierTiles > 0 and #FrontierTiles < 100 then
+                    for TileIdx, Tile in ipairs(FrontierTiles) do
                     if TileIdx % 10 == 0 then
                         RunService.RenderStepped:Wait()
                     end
@@ -522,57 +522,64 @@ local function InitializeBoard()
                         if MineValid and not SafeValid then
                             if Status[Tile.part] ~= TileState.Mine then
                                 Status[Tile.part] = TileState.Mine
+                                Tile.part.Color = MineColor
                                 Changed = true
                                 TryFlagTile(Tile.part)
                             end
                         elseif SafeValid and not MineValid then
                             if Status[Tile.part] ~= TileState.Safe then
                                 Status[Tile.part] = TileState.Safe
+                                Tile.part.Color = SafeColor
                                 Changed = true
                             end
                         end
                     end
                 end
-            end
-        end
-
-        local ColorUpdates = 0
-        for Part, _ in pairs(DirtyTiles) do
-            ColorUpdates = ColorUpdates + 1
-            if ColorUpdates % 50 == 0 then
-                RunService.RenderStepped:Wait()
-            end
-
-            local IsCurrentlyRevealed = Part:FindFirstChild("NumberGui") ~= nil
-            if IsCurrentlyRevealed then
-
-            elseif Status[Part] == TileState.Mine then
-                Part.Color = MineColor
-            elseif Status[Part] == TileState.Safe then
-                Part.Color = SafeColor
-            else
-                local OrigColor = OriginalColors[Part]
-                local Coords = GetCoords(Part)
-                
-                if Coords then
-                    local NeighborsList = GetNeighbors(Coords.r, Coords.c)
-                    local HasRevealedNeighbor = false
-                    for _, Info in ipairs(NeighborsList) do
-                        if Status[Info.part] == TileState.Revealed then
-                            HasRevealedNeighbor = true
-                            break
-                        end
-                    end
-                    if HasRevealedNeighbor then
-                        Part.Color = UncertainColor
-                    else
-                        Part.Color = OrigColor
-                    end
-                else
-                    Part.Color = OrigColor
                 end
             end
         end
+
+        local function UpdateColors(TilesToColor)
+            local ColorUpdates = 0
+            for Part, _ in pairs(TilesToColor) do
+                ColorUpdates = ColorUpdates + 1
+                if ColorUpdates % 100 == 0 then
+                    RunService.RenderStepped:Wait()
+                end
+
+                local IsCurrentlyRevealed = Part:FindFirstChild("NumberGui") ~= nil
+                if IsCurrentlyRevealed then
+
+                elseif Status[Part] == TileState.Mine then
+                    Part.Color = MineColor
+                elseif Status[Part] == TileState.Safe then
+                    Part.Color = SafeColor
+                else
+                    local OrigColor = OriginalColors[Part]
+                    local Coords = GetCoords(Part)
+                    
+                    if Coords then
+                        local NeighborsList = GetNeighbors(Coords.r, Coords.c)
+                        local HasRevealedNeighbor = false
+                        for _, Info in ipairs(NeighborsList) do
+                            if Status[Info.part] == TileState.Revealed then
+                                HasRevealedNeighbor = true
+                                break
+                            end
+                        end
+                        if HasRevealedNeighbor then
+                            Part.Color = UncertainColor
+                        else
+                            Part.Color = OrigColor
+                        end
+                    else
+                        Part.Color = OrigColor
+                    end
+                end
+            end
+        end
+
+        UpdateColors(DirtyTiles)
         
         DirtyTiles = {}
     end
