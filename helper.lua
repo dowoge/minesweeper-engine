@@ -1,21 +1,39 @@
+local Config = {
+    -- Solving
+    MaxSolvingIterations = 50,
+    MaxHypothesisIterations = 30,
+    MinIterationForPhase3 = 1,
+    MaxFrontierTilesForPhase3 = 200,
+    YieldEveryNTilesInPhase3 = 10,
+    YieldEveryNPairwiseChecks = 20,
+    YieldEveryNColorUpdates = 100,
+
+    -- Flagging
+    AutoFlagDistance = 22.5,
+    FlagDelay = 0.05,
+
+    -- Board stuff
+    HeartbeatInterval = 1,
+    BoardStableThreshold = 3,
+    MinPartsForValidBoard = 100,
+    ReinitDelay = 0.5,
+
+    -- Grid detection
+    PositionTolerance = 0.01,
+
+    -- Visuals
+    SafeColor = Color3.fromRGB(0, 255, 0),
+    MineColor = Color3.fromRGB(255, 0, 0),
+    UncertainColor = Color3.fromRGB(255, 200, 0),
+}
+
+-- Tile states
 local TileState = {
     Revealed = 1,
     Mine = 2,
     Safe = 3,
     Unknown = 4
 }
-
-local MAX_TESTING_ITERATIONS = 17
-local AUTO_FLAG_DISTANCE = 22.5
-
--- local TileSize = 5
-local PosTolerance = 0.01
--- local ColorTolerance = 8
-
--- local RevealedColor = Color3.fromRGB(230, 230, 113)
-local SafeColor = Color3.fromRGB(0, 255, 0)
-local MineColor = Color3.fromRGB(255, 0, 0)
-local UncertainColor = Color3.fromRGB(255, 200, 0)
 
 local PartsFolder = workspace:FindFirstChild("Flag") and workspace.Flag:FindFirstChild("Parts")
 if not PartsFolder then error("Parts folder not found") end
@@ -32,7 +50,7 @@ local function InitializeBoard()
     print("Initializing board...")
 
     local Connections = {}
-    
+
     local SalasanaValue = nil
     for _, Function in getgc(true) do
         if type(Function) == "function" and islclosure(Function) then
@@ -63,7 +81,7 @@ local function InitializeBoard()
 
     local function AddUnique(List, Value)
         for _, V in ipairs(List) do
-            if math.abs(V - Value) <= PosTolerance then return end
+            if math.abs(V - Value) <= Config.PositionTolerance then return end
         end
         table.insert(List, Value)
     end
@@ -172,7 +190,7 @@ local function InitializeBoard()
         if not RootPart then return false end
 
         local Distance = (RootPart.Position - Part.Position).Magnitude
-        if Distance >= AUTO_FLAG_DISTANCE then return false end
+        if Distance >= Config.AutoFlagDistance then return false end
 
         local Success = pcall(function()
             ReplicatedStorage.Events.FlagEvents.PlaceFlag:FireServer(Part, SalasanaValue, true)
@@ -187,7 +205,7 @@ local function InitializeBoard()
 
     local function Recompute()
         local NewlyRevealed = {}
-        
+
         for R = 1, Rows do
             for C = 1, Cols do
                 local Part = Grid[R][C]
@@ -202,7 +220,7 @@ local function InitializeBoard()
                             LastKnownRevealed[Part] = true
                             table.insert(NewlyRevealed, {R = R, C = C, Part = Part})
                             DirtyTiles[Part] = true
-                            
+
                             local Neighbors = GetNeighbors(R, C)
                             for _, Neighbor in ipairs(Neighbors) do
                                 DirtyTiles[Neighbor.Part] = true
@@ -215,7 +233,7 @@ local function InitializeBoard()
                 end
             end
         end
-        
+
         if next(NewlyRevealed) == nil and next(DirtyTiles) == nil then
             return
         end
@@ -246,12 +264,12 @@ local function InitializeBoard()
             return Unknowns, Mines
         end
 
-        local Changed = true
         local Iterations = 0
-        while Changed and Iterations < 50 do
+        while Iterations < Config.MaxSolvingIterations do
             Iterations = Iterations + 1
-            Changed = false
-            
+            local Changed = false
+
+            -- Basic deduction logic (cheapest, try first)
             for R = 1, Rows do
                 for C = 1, Cols do
                     local Part = Grid[R][C]
@@ -275,7 +293,7 @@ local function InitializeBoard()
                                 for _, UnknownPart in ipairs(Unknowns) do
                                     if Status[UnknownPart] ~= TileState.Safe then
                                         Status[UnknownPart] = TileState.Safe
-                                        UnknownPart.Color = SafeColor
+                                        UnknownPart.Color = Config.SafeColor
                                         Changed = true
                                         DirtyTiles[UnknownPart] = true
                                     end
@@ -284,7 +302,7 @@ local function InitializeBoard()
                                 for _, UnknownPart in ipairs(Unknowns) do
                                     if Status[UnknownPart] ~= TileState.Mine then
                                         Status[UnknownPart] = TileState.Mine
-                                        UnknownPart.Color = MineColor
+                                        UnknownPart.Color = Config.MineColor
                                         Changed = true
                                         DirtyTiles[UnknownPart] = true
                                         TryFlagTile(UnknownPart)
@@ -298,13 +316,15 @@ local function InitializeBoard()
                 if Changed then break end
             end
 
-            local PairwiseChecks = 0
-            for R = 1, Rows do
+            -- Pairwise comparison (only if Phase 1 found nothing)
+            if not Changed then
+                local PairwiseChecks = 0
+                for R = 1, Rows do
                 for C = 1, Cols do
                     local Cell = GetCellInfo(R, C)
                     if Cell and Cell.status == TileState.Revealed and Cell.Number and Cell.Number > 0 then
                         PairwiseChecks = PairwiseChecks + 1
-                        if PairwiseChecks % 20 == 0 then
+                        if PairwiseChecks % Config.YieldEveryNPairwiseChecks == 0 then
                             RunService.RenderStepped:Wait()
                         end
                         local NeighborsList = GetNeighbors(R, C)
@@ -354,46 +374,124 @@ local function InitializeBoard()
                                                     end
                                                 end
 
-                                                if #Unique1 > 0 and #Unique2 > 0 and #Shared > 0 then
-                                                    if Remaining1 == Remaining2 and #Unique1 > 0 then
+                                                -- Should andle all cases (shared unknowns, subsets, and supersets)
+                                                if #Shared > 0 or #Unique1 == 0 or #Unique2 == 0 then
+                                                    -- Case 1: Equal remaining mines with shared unknowns
+                                                    if Remaining1 == Remaining2 and #Unique1 > 0 and #Unique2 > 0 then
                                                         for _, U in ipairs(Unique1) do
                                                             if Status[U.Part] ~= TileState.Safe then
                                                                 Status[U.Part] = TileState.Safe
-                                                                U.Part.Color = SafeColor
+                                                                U.Part.Color = Config.SafeColor
                                                                 Changed = true
                                                             end
                                                         end
                                                         for _, U in ipairs(Unique2) do
                                                             if Status[U.Part] ~= TileState.Safe then
                                                                 Status[U.Part] = TileState.Safe
-                                                                U.Part.Color = SafeColor
+                                                                U.Part.Color = Config.SafeColor
                                                                 Changed = true
                                                             end
                                                         end
                                                     end
 
+                                                    -- Case 2: Cell 1's unique tiles contain all the extra mines
                                                     if Remaining1 - Remaining2 == #Unique1 and #Unique1 > 0 then
                                                         for _, U in ipairs(Unique1) do
                                                             if Status[U.Part] ~= TileState.Mine then
                                                                 Status[U.Part] = TileState.Mine
-                                                                U.Part.Color = MineColor
+                                                                U.Part.Color = Config.MineColor
                                                                 Changed = true
                                                                 TryFlagTile(U.Part)
+                                                            end
+                                                        end
+                                                        -- The shared tiles must be safe
+                                                        if Remaining2 == 0 then
+                                                            for _, S in ipairs(Shared) do
+                                                                if Status[S.Part] ~= TileState.Safe then
+                                                                    Status[S.Part] = TileState.Safe
+                                                                    S.Part.Color = Config.SafeColor
+                                                                    Changed = true
+                                                                end
                                                             end
                                                         end
                                                     end
 
+                                                    -- Case 3: Cell 2's unique tiles contain all the extra mines
                                                     if Remaining2 - Remaining1 == #Unique2 and #Unique2 > 0 then
                                                         for _, U in ipairs(Unique2) do
                                                             if Status[U.Part] ~= TileState.Mine then
                                                                 Status[U.Part] = TileState.Mine
-                                                                U.Part.Color = MineColor
+                                                                U.Part.Color = Config.MineColor
                                                                 Changed = true
                                                                 TryFlagTile(U.Part)
                                                             end
                                                         end
+                                                        -- The shared tiles must be safe
+                                                        if Remaining1 == 0 then
+                                                            for _, S in ipairs(Shared) do
+                                                                if Status[S.Part] ~= TileState.Safe then
+                                                                    Status[S.Part] = TileState.Safe
+                                                                    S.Part.Color = Config.SafeColor
+                                                                    Changed = true
+                                                                end
+                                                            end
+                                                        end
                                                     end
-                                                    
+
+                                                    -- Case 4: Perfect subset - Cell 1 is fully contained in Cell 2
+                                                    if #Unique1 == 0 and #Unknowns1 > 0 then
+                                                        -- All of Cell 1's unknowns are shared with Cell 2
+                                                        -- Cell 2 has Remaining2 mines, Cell 1 has Remaining1 mines
+                                                        -- So Unique2 must have exactly (Remaining2 - Remaining1) mines
+                                                        -- (p.42)
+                                                        local Unique2Mines = Remaining2 - Remaining1
+                                                        if Unique2Mines == 0 and #Unique2 > 0 then
+                                                            -- All unique tiles in Cell 2 are safe
+                                                            for _, U in ipairs(Unique2) do
+                                                                if Status[U.Part] ~= TileState.Safe then
+                                                                    Status[U.Part] = TileState.Safe
+                                                                    U.Part.Color = Config.SafeColor
+                                                                    Changed = true
+                                                                end
+                                                            end
+                                                        elseif Unique2Mines == #Unique2 and #Unique2 > 0 then
+                                                            -- All unique tiles in Cell 2 are mines
+                                                            for _, U in ipairs(Unique2) do
+                                                                if Status[U.Part] ~= TileState.Mine then
+                                                                    Status[U.Part] = TileState.Mine
+                                                                    U.Part.Color = Config.MineColor
+                                                                    Changed = true
+                                                                    TryFlagTile(U.Part)
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+
+                                                    -- Case 5: Perfect subset - Cell 2 is fully contained in Cell 1
+                                                    if #Unique2 == 0 and #Unknowns2 > 0 then
+                                                        local Unique1Mines = Remaining1 - Remaining2
+                                                        if Unique1Mines == 0 and #Unique1 > 0 then
+                                                            -- All unique tiles in Cell 1 are safe
+                                                            for _, U in ipairs(Unique1) do
+                                                                if Status[U.Part] ~= TileState.Safe then
+                                                                    Status[U.Part] = TileState.Safe
+                                                                    U.Part.Color = Config.SafeColor
+                                                                    Changed = true
+                                                                end
+                                                            end
+                                                        elseif Unique1Mines == #Unique1 and #Unique1 > 0 then
+                                                            -- All unique tiles in Cell 1 are mines
+                                                            for _, U in ipairs(Unique1) do
+                                                                if Status[U.Part] ~= TileState.Mine then
+                                                                    Status[U.Part] = TileState.Mine
+                                                                    U.Part.Color = Config.MineColor
+                                                                    Changed = true
+                                                                    TryFlagTile(U.Part)
+                                                                end
+                                                            end
+                                                        end
+                                                    end
+
                                                     if Changed then break end
                                                 end
                                             end
@@ -407,10 +505,12 @@ local function InitializeBoard()
                     end
                     if Changed then break end
                 end
-                if Changed then break end
+                    if Changed then break end
+                end
             end
-            
-            if not Changed and Iterations >= 3 then
+
+            -- Phase 3: Contradiction testing (only if Phase 1 AND Phase 2 found nothing)
+            if not Changed and Iterations >= Config.MinIterationForPhase3 then
                 local FrontierTiles = {}
                 for R = 1, Rows do
                     for C = 1, Cols do
@@ -431,21 +531,21 @@ local function InitializeBoard()
                     end
                 end
 
-                if #FrontierTiles > 0 and #FrontierTiles < 100 then
+                if #FrontierTiles > 0 and #FrontierTiles < Config.MaxFrontierTilesForPhase3 then
                     for TileIdx, Tile in ipairs(FrontierTiles) do
-                    if TileIdx % 10 == 0 then
+                    if TileIdx % Config.YieldEveryNTilesInPhase3 == 0 then
                         RunService.RenderStepped:Wait()
                     end
                     if Status[Tile.Part] == TileState.Unknown then
                         local function TestHypothesis(AssumeMine)
                             local TestStatus = {}
                             local RelevantParts = {}
-                            
+
                             for _, FTile in ipairs(FrontierTiles) do
                                 TestStatus[FTile.Part] = Status[FTile.Part]
                                 RelevantParts[FTile.Part] = true
                             end
-                            
+
                             for R = 1, Rows do
                                 for C = 1, Cols do
                                     local Part = Grid[R][C]
@@ -460,7 +560,7 @@ local function InitializeBoard()
 
                             local TestChanged = true
                             local Iterations = 0
-                            while TestChanged and Iterations < MAX_TESTING_ITERATIONS do
+                            while TestChanged and Iterations < Config.MaxHypothesisIterations do
                                 Iterations = Iterations + 1
                                 TestChanged = false
 
@@ -522,14 +622,14 @@ local function InitializeBoard()
                         if MineValid and not SafeValid then
                             if Status[Tile.Part] ~= TileState.Mine then
                                 Status[Tile.Part] = TileState.Mine
-                                Tile.Part.Color = MineColor
+                                Tile.Part.Color = Config.MineColor
                                 Changed = true
                                 TryFlagTile(Tile.Part)
                             end
                         elseif SafeValid and not MineValid then
                             if Status[Tile.Part] ~= TileState.Safe then
                                 Status[Tile.Part] = TileState.Safe
-                                Tile.Part.Color = SafeColor
+                                Tile.Part.Color = Config.SafeColor
                                 Changed = true
                             end
                         end
@@ -537,13 +637,18 @@ local function InitializeBoard()
                 end
                 end
             end
+
+            -- Exit early if nothing changed in this iteration
+            if not Changed then
+                break
+            end
         end
 
         local function UpdateColors(TilesToColor)
             local ColorUpdates = 0
             for Part, _ in pairs(TilesToColor) do
                 ColorUpdates = ColorUpdates + 1
-                if ColorUpdates % 100 == 0 then
+                if ColorUpdates % Config.YieldEveryNColorUpdates == 0 then
                     RunService.RenderStepped:Wait()
                 end
 
@@ -551,13 +656,13 @@ local function InitializeBoard()
                 if IsCurrentlyRevealed then
 
                 elseif Status[Part] == TileState.Mine then
-                    Part.Color = MineColor
+                    Part.Color = Config.MineColor
                 elseif Status[Part] == TileState.Safe then
-                    Part.Color = SafeColor
+                    Part.Color = Config.SafeColor
                 else
                     local OrigColor = OriginalColors[Part]
                     local Coords = GetCoords(Part)
-                    
+
                     if Coords then
                         local NeighborsList = GetNeighbors(Coords.R, Coords.C)
                         local HasRevealedNeighbor = false
@@ -568,7 +673,7 @@ local function InitializeBoard()
                             end
                         end
                         if HasRevealedNeighbor then
-                            Part.Color = UncertainColor
+                            Part.Color = Config.UncertainColor
                         else
                             Part.Color = OrigColor
                         end
@@ -580,7 +685,7 @@ local function InitializeBoard()
         end
 
         UpdateColors(DirtyTiles)
-        
+
         DirtyTiles = {}
     end
 
@@ -618,18 +723,17 @@ local function InitializeBoard()
                 local Part = Grid[R][C]
                 if Part and Status[Part] == TileState.Mine and not IsFlagged(Part) then
                     if TryFlagTile(Part) then
-                        task.wait(0.05)
+                        task.wait(Config.FlagDelay)
                     end
                 end
             end
         end
     end
 
-    local HeartbeatInterval = 1
     local MainLoop = nil
     MainLoop = spawn(function()
         while BoardActive and not ReinitializeRequested do
-            task.wait(HeartbeatInterval)
+            task.wait(Config.HeartbeatInterval)
             if BoardActive and not ReinitializeRequested then
                 ScheduleRecompute()
                 FlagNearbyMines()
@@ -657,7 +761,6 @@ local function MonitorBoard()
     local LastChildCount = #PartsFolder:GetChildren()
     local BoardDisappeared = false
     local StableCount = 0
-    local StableThreshold = 3
 
     PartsFolder.ChildAdded:Connect(function()
         local CurrentCount = #PartsFolder:GetChildren()
@@ -674,7 +777,7 @@ local function MonitorBoard()
             BoardDisappeared = true
             BoardActive = false
             ReinitializeRequested = true
-            
+
             if CurrentBoard and CurrentBoard.Cleanup then
                 CurrentBoard.Cleanup()
                 print("Cleaned up board state")
@@ -691,14 +794,14 @@ local function MonitorBoard()
                 if CurrentCount == LastChildCount then
                     StableCount = StableCount + 1
 
-                    if StableCount >= StableThreshold and CurrentCount >= 100 then
+                    if StableCount >= Config.BoardStableThreshold and CurrentCount >= Config.MinPartsForValidBoard then
                         print("Board stable with " .. CurrentCount .. " parts - reinitializing...")
                         BoardDisappeared = false
                         BoardActive = true
                         ReinitializeRequested = false
                         StableCount = 0
 
-                        task.wait(0.5)
+                        task.wait(Config.ReinitDelay)
                         CurrentBoard = InitializeBoard()
                     end
                 else
