@@ -1,4 +1,4 @@
--- Minesweeper Engine (compiled 18-Mar-26 0:31:54.05 EST)
+-- Minesweeper Engine (compiled Wed Mar 18 00:59:50 EDT 2026 EST)
 
 -- ======== Config ========
 local Config = {
@@ -16,7 +16,7 @@ local Config = {
     YieldEveryNRecursions = 500,
 
     -- Flagging
-    AutoFlagDistance = 22.5,
+    AutoFlagDistance = 0,
     FlagDelayMin = 0.1,
     FlagDelayMax = 0.4,
     FlagBatchSize = 3,
@@ -329,6 +329,7 @@ function Solver.FastSolve()
                     Board.Status[Part] = TileState.Revealed
                 elseif Board.Status[Part] == nil then
                     Board.Status[Part] = TileState.Unknown
+                    Board.DirtyTiles[Part] = true
                 end
             end
         end
@@ -587,6 +588,7 @@ function Solver.HypothesisTest()
         Board.TilesBeingAnalyzed[Tile.Part] = true
     end
     Visual.UpdateColors(Board.TilesBeingAnalyzed)
+    RunService.RenderStepped:Wait()
 
     local Changed = false
     for TileIdx, Tile in ipairs(FrontierTiles) do
@@ -1031,11 +1033,17 @@ function ProbabilityEngine.Solve()
         return false
     end
 
-    -- Mark tiles as being analyzed
-    for _, Tile in ipairs(FrontierTiles) do
-        Board.TilesBeingAnalyzed[Tile.Part] = true
+    -- Mark ALL unknown tiles as being analyzed (frontier + off-edge)
+    for R = 1, Board.Rows do
+        for C = 1, Board.Cols do
+            local Part = Board.Grid[R][C]
+            if Part and Board.Status[Part] == TileState.Unknown then
+                Board.TilesBeingAnalyzed[Part] = true
+            end
+        end
     end
     Visual.UpdateColors(Board.TilesBeingAnalyzed)
+    RunService.RenderStepped:Wait()
 
     local Boxes, WitnessSet, WitnessToBoxes, FrontierLookup = ProbabilityEngine.BuildWitnessBoxGraph(FrontierTiles)
 
@@ -1141,6 +1149,34 @@ function ProbabilityEngine.Solve()
             if Prob < BestGuessProb then
                 BestGuessProb = Prob
                 BestGuessTile = Box.tiles[1]
+            end
+        end
+    end
+
+    -- Apply deterministic off-edge results
+    if OffEdgeProb == 0 then
+        for R = 1, Board.Rows do
+            for C = 1, Board.Cols do
+                local Part = Board.Grid[R][C]
+                if Part and Board.Status[Part] == TileState.Unknown and not FrontierLookup[Part] then
+                    Board.Status[Part] = TileState.Safe
+                    Part.Color = Config.SafeColor
+                    Changed = true
+                    Board.DirtyTiles[Part] = true
+                end
+            end
+        end
+    elseif OffEdgeProb == 1 then
+        for R = 1, Board.Rows do
+            for C = 1, Board.Cols do
+                local Part = Board.Grid[R][C]
+                if Part and Board.Status[Part] == TileState.Unknown and not FrontierLookup[Part] then
+                    Board.Status[Part] = TileState.Mine
+                    Part.Color = Config.MineColor
+                    Changed = true
+                    Board.DirtyTiles[Part] = true
+                    Flagging.TryFlagTile(Part)
+                end
             end
         end
     end
@@ -1264,6 +1300,7 @@ local function InitializeBoard()
     Board.DeepAnalysisRunning = false
     Board.SuppressColorEvents = false
     Board.Connections = {}
+    Config.TotalMines = nil
 
     -- Extract salasana value from MouseControl upvalues
     Board.SalasanaValue = nil
@@ -1297,6 +1334,21 @@ local function InitializeBoard()
 
     -- Initialize grid
     Grid.Init(Parts)
+
+    -- Read total mines from game UI
+    local InfoGui = LocalPlayer:FindFirstChild("PlayerGui")
+        and LocalPlayer.PlayerGui:FindFirstChild("InfoGui")
+        and LocalPlayer.PlayerGui.InfoGui:FindFirstChild("Frame")
+    if InfoGui then
+        local MinesLabel = InfoGui:FindFirstChild("Mines")
+        if MinesLabel then
+            local MineCount = tonumber(MinesLabel.Text:match("%d+"))
+            if MineCount then
+                Config.TotalMines = MineCount
+                print("Total mines: " .. MineCount)
+            end
+        end
+    end
 
     -- Connect color change events
     local FastSolveScheduled = false

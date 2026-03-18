@@ -11,6 +11,7 @@ local function InitializeBoard()
     Board.DeepAnalysisRunning = false
     Board.SuppressColorEvents = false
     Board.Connections = {}
+    Config.TotalMines = nil
 
     -- Extract salasana value from MouseControl upvalues
     Board.SalasanaValue = nil
@@ -44,6 +45,21 @@ local function InitializeBoard()
 
     -- Initialize grid
     Grid.Init(Parts)
+
+    -- Read total mines from game UI
+    local InfoGui = LocalPlayer:FindFirstChild("PlayerGui")
+        and LocalPlayer.PlayerGui:FindFirstChild("InfoGui")
+        and LocalPlayer.PlayerGui.InfoGui:FindFirstChild("Frame")
+    if InfoGui then
+        local MinesLabel = InfoGui:FindFirstChild("Mines")
+        if MinesLabel then
+            local MineCount = tonumber(MinesLabel.Text:match("%d+"))
+            if MineCount then
+                Config.TotalMines = MineCount
+                print("Total mines: " .. MineCount)
+            end
+        end
+    end
 
     -- Connect color change events
     local FastSolveScheduled = false
