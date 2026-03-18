@@ -13,7 +13,7 @@ local Config = {
     YieldEveryNRecursions = 500,
 
     -- Flagging
-    AutoFlagDistance = 22.5,
+    AutoFlagDistance = 0,
     FlagDelayMin = 0.1,
     FlagDelayMax = 0.4,
     FlagBatchSize = 3,
