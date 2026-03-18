@@ -301,11 +301,17 @@ function ProbabilityEngine.Solve()
         return false
     end
 
-    -- Mark tiles as being analyzed
-    for _, Tile in ipairs(FrontierTiles) do
-        Board.TilesBeingAnalyzed[Tile.Part] = true
+    -- Mark ALL unknown tiles as being analyzed (frontier + off-edge)
+    for R = 1, Board.Rows do
+        for C = 1, Board.Cols do
+            local Part = Board.Grid[R][C]
+            if Part and Board.Status[Part] == TileState.Unknown then
+                Board.TilesBeingAnalyzed[Part] = true
+            end
+        end
     end
     Visual.UpdateColors(Board.TilesBeingAnalyzed)
+    RunService.RenderStepped:Wait()
 
     local Boxes, WitnessSet, WitnessToBoxes, FrontierLookup = ProbabilityEngine.BuildWitnessBoxGraph(FrontierTiles)
 
@@ -411,6 +417,34 @@ function ProbabilityEngine.Solve()
             if Prob < BestGuessProb then
                 BestGuessProb = Prob
                 BestGuessTile = Box.tiles[1]
+            end
+        end
+    end
+
+    -- Apply deterministic off-edge results
+    if OffEdgeProb == 0 then
+        for R = 1, Board.Rows do
+            for C = 1, Board.Cols do
+                local Part = Board.Grid[R][C]
+                if Part and Board.Status[Part] == TileState.Unknown and not FrontierLookup[Part] then
+                    Board.Status[Part] = TileState.Safe
+                    Part.Color = Config.SafeColor
+                    Changed = true
+                    Board.DirtyTiles[Part] = true
+                end
+            end
+        end
+    elseif OffEdgeProb == 1 then
+        for R = 1, Board.Rows do
+            for C = 1, Board.Cols do
+                local Part = Board.Grid[R][C]
+                if Part and Board.Status[Part] == TileState.Unknown and not FrontierLookup[Part] then
+                    Board.Status[Part] = TileState.Mine
+                    Part.Color = Config.MineColor
+                    Changed = true
+                    Board.DirtyTiles[Part] = true
+                    Flagging.TryFlagTile(Part)
+                end
             end
         end
     end
