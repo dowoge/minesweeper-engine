@@ -55,6 +55,7 @@ function Solver.FastSolve()
                     Board.Status[Part] = TileState.Revealed
                 elseif Board.Status[Part] == nil then
                     Board.Status[Part] = TileState.Unknown
+                    Board.DirtyTiles[Part] = true
                 end
             end
         end
@@ -313,6 +314,7 @@ function Solver.HypothesisTest()
         Board.TilesBeingAnalyzed[Tile.Part] = true
     end
     Visual.UpdateColors(Board.TilesBeingAnalyzed)
+    RunService.RenderStepped:Wait()
 
     local Changed = false
     for TileIdx, Tile in ipairs(FrontierTiles) do
