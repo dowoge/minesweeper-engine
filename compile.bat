@@ -3,7 +3,7 @@ setlocal
 set "OUTPUT=build\Minesweeper.lua"
 if not exist build mkdir build
 
-echo -- Minesweeper Engine (compiled %date%%time% EST)> "%OUTPUT%"
+echo -- Minesweeper Engine (compiled %date%%time%)> "%OUTPUT%"
 echo.>> "%OUTPUT%"
 
 for %%f in (Config Grid Visual Flagging Solver ProbabilityEngine BoardMonitor Main) do (
